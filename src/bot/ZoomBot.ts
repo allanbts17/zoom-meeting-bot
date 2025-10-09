@@ -27,6 +27,7 @@ export class ZoomBot {
             ...config,
             headless: config.headless ?? false, // Por defecto visible para debug
         };
+        console.log('🤖 ZoomBot configurado con:', config)
     }
 
     async launch(): Promise<void> {
@@ -66,14 +67,13 @@ export class ZoomBot {
         await this.page.waitForLoadState('networkidle');
 
         // Llenar formulario de login
-        await this.page.fill('input[type="email"]', this.config.email);
-        await this.page.fill('input[type="password"]', this.config.password);
-
+        await this.page.fill('input[type="text"]', this.config.email);
         // Click en Sign In
-        await this.page.click('button[type="submit"]');
-
+        await this.page.click('#signin_btn_next');
+        await this.page.fill('input[type="password"]', this.config.password);
+        await this.page.click('#js_btn_login');
         // Esperar a que cargue el dashboard
-        await this.page.waitForURL('**/profile', { timeout: 30000 });
+        await this.page.waitForURL('**/myhome', { timeout: 30000 });
 
         console.log('✅ Login exitoso');
     }

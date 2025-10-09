@@ -24,27 +24,78 @@ export class ApiServer {
         this.app.use(express.json());
         this.app.use(express.urlencoded({ extended: true }));
 
-        // Servir videos con headers correctos
-        this.app.use('/videos', (req, res, next) => {
-            // Configurar headers para video streaming
-            res.setHeader('Accept-Ranges', 'bytes');
+        // CORS para permitir acceso desde el navegador
+        this.app.use((req, res, next) => {
             res.setHeader('Access-Control-Allow-Origin', '*');
+            res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+            res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Range');
+            next();
+        });
 
-            // Determinar Content-Type basado en extensión
-            const ext = path.extname(req.path).toLowerCase();
-            const contentTypes: { [key: string]: string } = {
-                '.mp4': 'video/mp4',
-                '.webm': 'video/webm',
-                '.ogg': 'video/ogg',
-                '.mov': 'video/quicktime'
-            };
+        // Servir videos con configuración especial
+        this.app.get('/videos/:filename', (req, res) => {
+            const filename = req.params.filename;
+            const filePath = path.join(__dirname, '../../temp', filename);
 
-            if (contentTypes[ext]) {
-                res.setHeader('Content-Type', contentTypes[ext]);
+            console.log('📹 Solicitando video:', filename);
+            console.log('📂 Ruta completa:', filePath);
+
+            const fs = require('fs');
+
+            // Verificar que existe
+            if (!fs.existsSync(filePath)) {
+                console.error('❌ Archivo no encontrado:', filePath);
+                return res.status(404).send('Video no encontrado');
             }
 
-            next();
-        }, express.static(path.join(__dirname, '../../temp')));
+            const stat = fs.statSync(filePath);
+            const fileSize = stat.size;
+            const range = req.headers.range;
+            console.log('headers:', req.headers);
+            console.log('📊 Tamaño del archivo:', fileSize, 'bytes');
+            console.log('📍 Range solicitado:', range || 'ninguno');
+
+            // Determinar Content-Type
+            const ext = path.extname(filename).toLowerCase();
+            const contentType = ext === '.mp4' ? 'video/mp4' : 'application/octet-stream';
+            console.log('📋 Range type:', typeof range,range);
+            if (range) {
+                // Soporte para streaming parcial (range requests)
+                const parts = range.replace(/bytes=/, '').split('-');
+                const start = parseInt(parts[0], 10);
+                const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+                const chunksize = (end - start) + 1;
+                const file = fs.createReadStream(filePath, { start, end });
+
+                res.writeHead(206, {
+                    'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+                    'Accept-Ranges': 'bytes',
+                    'Content-Length': chunksize,
+                    'Content-Type': contentType,
+                    'Cache-Control': 'no-cache'
+                });
+
+                console.log(start, end, fileSize,{
+                    'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+                    'Accept-Ranges': 'bytes',
+                    'Content-Length': chunksize,
+                    'Content-Type': contentType,
+                    'Cache-Control': 'no-cache'
+                })
+
+                file.pipe(res);
+            } else {
+                // Enviar archivo completo
+                res.writeHead(200, {
+                    'Content-Length': fileSize,
+                    'Content-Type': contentType,
+                    'Accept-Ranges': 'bytes',
+                    'Cache-Control': 'no-cache'
+                });
+
+                fs.createReadStream(filePath).pipe(res);
+            }
+        });
     }
 
     private setupRoutes(): void {
@@ -172,6 +223,15 @@ export class ApiServer {
                     throw new Error('El video convertido no es válido');
                 }
 
+                // NUEVO: Verificar que el archivo existe y tiene tamaño
+                const fs = require('fs');
+                const stats = fs.statSync(convertedPath);
+                console.log('📊 Archivo convertido:', {
+                    path: convertedPath,
+                    size: `${(stats.size / 1024 / 1024).toFixed(2)} MB`,
+                    exists: fs.existsSync(convertedPath)
+                });
+
                 // Guardar la ruta del video actual
                 this.currentVideoPath = convertedPath;
 
@@ -181,8 +241,21 @@ export class ApiServer {
 
                 console.log('🌐 URL del video:', videoUrl);
 
+                // NUEVO: Verificar que la URL es accesible desde Node
+                const http = require('http');
+                await new Promise<void>((resolve, reject) => {
+                    http.get(videoUrl, (response: any) => {
+                        console.log('✅ URL accesible, status:', response.statusCode);
+                        console.log('📋 Headers:', response.headers);
+                        resolve();
+                    }).on('error', (err: any) => {
+                        console.error('❌ URL no accesible:', err);
+                        reject(err);
+                    });
+                });
+
                 // Esperar un momento para que el archivo esté completamente escrito
-                await new Promise(resolve => setTimeout(resolve, 1000));
+                await new Promise(resolve => setTimeout(resolve, 2000));
 
                 // Configurar cámara virtual con la URL HTTP
                 await this.bot.setupVirtualCamera(videoUrl);
