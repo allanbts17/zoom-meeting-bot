@@ -49,28 +49,51 @@ export class VideoProcessor {
     }
 
     async convertToWebRTC(inputPath: string, outputPath?: string): Promise<string> {
-        const output = outputPath || inputPath.replace(path.extname(inputPath), '_converted.mp4');
+        // Cambiar extensión a .webm
+        const output = outputPath || inputPath.replace(path.extname(inputPath), '_converted.webm');
 
         return new Promise((resolve, reject) => {
-            console.log('🔄 Convirtiendo video (modo simple)...');
+            console.log('🔄 Convirtiendo video a WebM para Chromium...');
+            console.log('📂 Input:', inputPath);
+            console.log('📂 Output:', output);
 
             ffmpeg(inputPath)
-                .size('1280x720')
-                .videoCodec('libx264')
-                .audioCodec('aac')
                 .outputOptions([
-                    '-profile:v baseline',
-                    '-pix_fmt yuv420p',
-                    '-movflags +faststart'
+                    // Video - VP8 o VP9 (códecs open source)
+                    '-c:v', 'libvpx',              // Codec VP8 (compatible con Chromium)
+                    '-b:v', '2M',                  // Bitrate de video
+                    '-crf', '10',                  // Calidad (0-63, menor = mejor)
+                    '-quality', 'realtime',        // Velocidad de encoding
+
+                    // Audio - Vorbis u Opus (open source)
+                    '-c:a', 'libvorbis',          // Codec Vorbis
+                    '-b:a', '128k',               // Bitrate de audio
+                    '-ar', '48000',               // Sample rate
+
+                    // Resolución y FPS
+                    '-vf', 'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:black',
+                    '-r', '30',                    // 30 FPS
+
+                    // Formato
+                    '-f', 'webm'
                 ])
                 .output(output)
+                .on('start', (commandLine) => {
+                    console.log('🎬 FFmpeg command:', commandLine);
+                })
                 .on('end', () => {
-                    console.log('✅ Video convertido');
+                    console.log('✅ Video WebM convertido exitosamente');
                     resolve(output);
                 })
-                .on('error', (err) => {
-                    console.error('❌ Error:', err.message);
+                .on('error', (err, stdout, stderr) => {
+                    console.error('❌ Error convirtiendo video:', err.message);
+                    console.error('FFmpeg stderr:', stderr);
                     reject(err);
+                })
+                .on('progress', (progress) => {
+                    if (progress.percent) {
+                        console.log(`Progreso: ${progress.percent.toFixed(1)}%`);
+                    }
                 })
                 .run();
         });

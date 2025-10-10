@@ -57,8 +57,13 @@ export class ApiServer {
 
             // Determinar Content-Type
             const ext = path.extname(filename).toLowerCase();
-            const contentType = ext === '.mp4' ? 'video/mp4' : 'application/octet-stream';
-            console.log('📋 Range type:', typeof range,range);
+            const contentTypes: { [key: string]: string } = {
+                '.mp4': 'video/mp4',
+                '.webm': 'video/webm',  // ← AÑADIR ESTO
+                '.ogg': 'video/ogg'
+            };
+            const contentType = contentTypes[ext] || 'application/octet-stream';
+            console.log('📋 Range type:', typeof range, range);
             if (range) {
                 // Soporte para streaming parcial (range requests)
                 const parts = range.replace(/bytes=/, '').split('-');
@@ -75,7 +80,7 @@ export class ApiServer {
                     'Cache-Control': 'no-cache'
                 });
 
-                console.log(start, end, fileSize,{
+                console.log(start, end, fileSize, {
                     'Content-Range': `bytes ${start}-${end}/${fileSize}`,
                     'Accept-Ranges': 'bytes',
                     'Content-Length': chunksize,
@@ -147,18 +152,44 @@ export class ApiServer {
 
                 const { videoFileName } = req.body;
 
+                console.log('📦 Iniciando proceso de streaming...');
+
                 // Descargar video
                 const localPath = await this.storage.downloadVideo(videoFileName);
 
                 // Procesar video
                 const convertedPath = await this.videoProcessor.convertToWebRTC(localPath);
 
+                // Verificar video
+                const isValid = await this.videoProcessor.verifyVideo(convertedPath);
+                if (!isValid) {
+                    throw new Error('El video convertido no es válido');
+                }
+
+                // Guardar la ruta del video actual
+                this.currentVideoPath = convertedPath;
+
+                // ✅ CONSTRUIR URL HTTP (no usar ruta de archivo)
+                const videoFileName_converted = path.basename(convertedPath);
+                const videoUrl = `http://localhost:${this.port}/videos/${videoFileName_converted}`;
+
+                console.log('🌐 URL HTTP del video:', videoUrl);
+
+                // Esperar un momento para que el archivo esté disponible
+                await new Promise(resolve => setTimeout(resolve, 1000));
+
                 // Setup cámara virtual
-                await this.bot.setupVirtualCamera(convertedPath);
+                await this.bot.setupVirtualCamera(videoUrl);
                 await this.bot.startVideo();
 
-                res.json({ success: true, message: 'Video streaming iniciado' });
+                res.json({
+                    success: true,
+                    message: 'Video streaming iniciado',
+                    videoPath: convertedPath,
+                    videoUrl: videoUrl
+                });
             } catch (error: any) {
+                console.error('❌ Error en streaming:', error);
                 res.status(500).json({ success: false, error: error.message });
             }
         });
