@@ -15,6 +15,8 @@
 
   // Función para establecer el stream de video personalizado
   window.setCustomVideoStream = function(videoElement) {
+    console.log(videoElement)
+    console.log('videoElement',videoElement)
     console.log('📹 Configurando stream de video personalizado');
     
     try {

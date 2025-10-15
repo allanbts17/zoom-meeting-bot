@@ -181,6 +181,7 @@ export class ApiServer {
                 // Setup cámara virtual
                 await this.bot.setupVirtualCamera(videoUrl);
                 await this.bot.startVideo();
+                await this.bot.unmuteMic();
 
                 res.json({
                     success: true,

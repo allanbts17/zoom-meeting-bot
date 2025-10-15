@@ -101,6 +101,9 @@ export class ZoomBot {
 
         // Esperar a entrar a la reunión
         await this.page.waitForSelector('[aria-label*="mute"]', { timeout: 60000 });
+        await this.muteMic();
+        await this.stopVideo();
+
 
         this.isInMeeting = true;
         console.log('✅ Dentro de la reunión');
@@ -137,7 +140,7 @@ export class ZoomBot {
                         const video = document.createElement('video');
                         video.src = videoSrc;
                         video.loop = true;
-                        video.muted = true;
+                        video.muted = false;
                         video.autoplay = true;
                         video.playsInline = true;
                         video.crossOrigin = 'anonymous';
@@ -171,6 +174,7 @@ export class ZoomBot {
                                     setTimeout(() => {
                                         // Configurar el stream personalizado
                                         if (typeof window.setCustomVideoStream === 'function') {
+                                            console.log('🎥 Configurando stream personalizado...',video);
                                             window.setCustomVideoStream(video);
                                             console.log('✅ Stream personalizado activado');
                                             if (!resolved) {
@@ -273,27 +277,45 @@ export class ZoomBot {
 
     async startVideo(): Promise<void> {
         if (!this.page) throw new Error('Browser not launched');
-
-        // Click en botón de video
-        const videoButton = await this.page.$('[aria-label*="start video"], [aria-label*="Stop video"]');
+        const videoButton = await this.page.locator('button[aria-label="start my video"]')
         if (videoButton) {
-            await videoButton.click();
+            await videoButton.dblclick();
             console.log('✅ Video iniciado');
+        }
+    }
+
+    async stopVideo(): Promise<void> {
+        if (!this.page) throw new Error('Browser not launched');
+        const videoButton = await this.page.locator('button[aria-label="stop my video"]')
+        if (videoButton) {
+            await videoButton.dblclick();
+            console.log('✅ Video detenido');
+        }
+    }
+
+    async muteMic(): Promise<void> {
+        if (!this.page) throw new Error('Browser not launched');
+        const micButton = await this.page.locator('button[aria-label="mute my microphone"]');
+        if (micButton) {
+            await micButton.click();
+            console.log('✅ Mic muteado');
+        }
+    }
+
+    async unmuteMic(): Promise<void> {
+        if (!this.page) throw new Error('Browser not launched');
+        const micButton = await this.page.locator('button[aria-label="unmute my microphone"]');
+        if (micButton) {
+            await micButton.click();
+            console.log('✅ Mic abierto');
         }
     }
 
     async leaveMeeting(): Promise<void> {
         if (!this.page) throw new Error('Browser not launched');
-
         console.log('👋 Saliendo de la reunión...');
-
-        // Click en botón de salir
-        const leaveButton = await this.page.$('button:has-text("Leave")');
-        if (leaveButton) {
-            await leaveButton.click();
-            await this.page.waitForTimeout(1000);
-        }
-
+        await this.page.locator('button[aria-label="Leave"]').dblclick();
+        await this.page.locator('button.leave-meeting-options__btn--danger').click();
         this.isInMeeting = false;
         console.log('✅ Reunión abandonada');
     }
