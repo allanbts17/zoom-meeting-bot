@@ -112,24 +112,10 @@ export class ZoomBot {
     async setupVirtualCamera(videoUrl: string): Promise<void> {
         if (!this.page) throw new Error('Browser not launched');
 
-        console.log('🎥 Configurando cámara virtual con video...');
+        console.log('🎥 Configurando cámara virtual con video y audio...');
         console.log('🌐 URL del video:', videoUrl);
 
         try {
-            // Primero, verificar que el script de inyección está disponible
-            const scriptLoaded = await this.page.evaluate(() => {
-                return typeof window.setCustomVideoStream === 'function';
-            });
-
-            if (!scriptLoaded) {
-                console.warn('⚠️ Script de inyección no detectado, reinyectando...');
-                await this.page.addInitScript({
-                    path: path.join(__dirname, 'inject-video.js')
-                });
-                await this.page.waitForTimeout(1000);
-            }
-
-            // Inyectar y reproducir el video usando URL HTTP
             const result = await this.page.evaluate((videoSrc) => {
                 return new Promise<{ success: boolean; error?: string }>((resolve) => {
                     try {
@@ -140,67 +126,138 @@ export class ZoomBot {
                         const video = document.createElement('video');
                         video.src = videoSrc;
                         video.loop = true;
-                        video.muted = false;
+                        video.muted = false; // ⚠️ CAMBIADO: NO muted para capturar audio
                         video.autoplay = true;
                         video.playsInline = true;
                         video.crossOrigin = 'anonymous';
+                        video.volume = 1.0; // ⚠️ NUEVO: Volumen al máximo
                         video.style.position = 'fixed';
                         video.style.top = '-9999px';
                         video.style.left = '-9999px';
                         video.style.width = '1280px';
                         video.style.height = '720px';
+                        video.setAttribute('data-custom-stream', 'true');
                         document.body.appendChild(video);
 
                         let resolved = false;
-
-                        video.onloadeddata = () => {
-                            console.log('📦 Datos del video cargados');
-                            console.log('📊 Video info:', {
-                                duration: video.duration,
-                                width: video.videoWidth,
-                                height: video.videoHeight,
-                                readyState: video.readyState
-                            });
-                        };
 
                         video.oncanplay = () => {
                             console.log('✅ Video listo para reproducir');
 
                             video.play()
                                 .then(() => {
-                                    console.log('▶️ Video reproduciendo');
+                                    console.log('▶️ Video reproduciendo con audio');
 
-                                    // Esperar un frame antes de capturar
                                     setTimeout(() => {
-                                        // Configurar el stream personalizado
-                                        if (typeof window.setCustomVideoStream === 'function') {
-                                            console.log('🎥 Configurando stream personalizado...',video);
-                                            window.setCustomVideoStream(video);
-                                            console.log('✅ Stream personalizado activado');
+                                        try {
+                                            // ===== CANVAS PARA VIDEO =====
+                                            const canvas = document.createElement('canvas');
+                                            canvas.width = 1280;
+                                            canvas.height = 720;
+                                            canvas.setAttribute('data-custom-canvas', 'true');
+                                            const ctx = canvas.getContext('2d', { alpha: false });
+
+                                            if (!ctx) {
+                                                throw new Error('No se pudo crear contexto de canvas');
+                                            }
+
+                                            console.log('✅ Canvas creado para video');
+
+                                            // Capturar frames del video
+                                            function captureFrame() {
+                                                if (video.readyState >= 2) {
+                                                    ctx?.drawImage(video, 0, 0, canvas.width, canvas.height);
+                                                }
+                                                requestAnimationFrame(captureFrame);
+                                            }
+                                            captureFrame();
+
+                                            // Crear stream de video desde el canvas
+                                            const videoStream = canvas.captureStream(30);
+                                            const videoTrack = videoStream.getVideoTracks()[0];
+
+                                            console.log('✅ Video stream creado');
+
+                                            // ===== CAPTURAR AUDIO DEL VIDEO =====
+                                            // Crear AudioContext para capturar el audio
+                                            const audioContext = new AudioContext();
+                                            const source = audioContext.createMediaElementSource(video);
+                                            const destination = audioContext.createMediaStreamDestination();
+
+                                            // Conectar el audio del video al destino
+                                            source.connect(destination);
+                                            // También conectar a los speakers para escucharlo localmente (opcional)
+                                            source.connect(audioContext.destination);
+
+                                            const audioTrack = destination.stream.getAudioTracks()[0];
+
+                                            console.log('✅ Audio capturado del video');
+                                            console.log('🎵 Audio track ID:', audioTrack.id);
+
+                                            // ===== COMBINAR VIDEO + AUDIO =====
+                                            const combinedStream = new MediaStream([videoTrack, audioTrack]);
+
+                                            console.log('✅ Stream combinado creado:', {
+                                                videoTracks: combinedStream.getVideoTracks().length,
+                                                audioTracks: combinedStream.getAudioTracks().length
+                                            });
+
+                                            // Guardar en window
+                                            (window as any).__customVideoStream = combinedStream;
+                                            (window as any).__customVideoTrack = videoTrack;
+                                            (window as any).__customAudioTrack = audioTrack;
+                                            (window as any).__audioContext = audioContext;
+
+                                            // ===== INTERCEPTOR DE getUserMedia =====
+                                            const originalGetUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+
+                                            navigator.mediaDevices.getUserMedia = async function (constraints) {
+                                                console.log('🎥 getUserMedia interceptado, constraints:', constraints);
+
+                                                if ((window as any).__customVideoStream) {
+                                                    const customStream = (window as any).__customVideoStream;
+
+                                                    // Si pide video Y audio, retornar ambos
+                                                    if (constraints?.video && constraints?.audio) {
+                                                        console.log('✅ Retornando video + audio personalizado');
+                                                        return customStream;
+                                                    }
+                                                    // Si solo pide video
+                                                    else if (constraints?.video) {
+                                                        console.log('✅ Retornando solo video personalizado');
+                                                        return new MediaStream([videoTrack]);
+                                                    }
+                                                    // Si solo pide audio
+                                                    else if (constraints?.audio) {
+                                                        console.log('✅ Retornando solo audio personalizado');
+                                                        return new MediaStream([audioTrack]);
+                                                    }
+                                                }
+
+                                                console.log('📹 Usando getUserMedia original');
+                                                return originalGetUserMedia(constraints);
+                                            };
+
+                                            console.log('✅ Interceptor configurado con audio');
+
                                             if (!resolved) {
                                                 resolved = true;
                                                 resolve({ success: true });
                                             }
-                                        } else {
-                                            console.error('❌ setCustomVideoStream no está disponible');
+                                        } catch (err: any) {
+                                            console.error('❌ Error configurando stream:', err);
                                             if (!resolved) {
                                                 resolved = true;
-                                                resolve({
-                                                    success: false,
-                                                    error: 'setCustomVideoStream not found'
-                                                });
+                                                resolve({ success: false, error: err.message });
                                             }
                                         }
-                                    }, 100);
+                                    }, 500);
                                 })
                                 .catch((err) => {
                                     console.error('❌ Error reproduciendo video:', err);
                                     if (!resolved) {
                                         resolved = true;
-                                        resolve({
-                                            success: false,
-                                            error: `Play error: ${err.message}`
-                                        });
+                                        resolve({ success: false, error: err.message });
                                     }
                                 });
                         };
@@ -209,53 +266,26 @@ export class ZoomBot {
                             const error = video.error;
                             let errorMsg = 'Error desconocido';
                             if (error) {
-                                switch (error.code) {
-                                    case 1:
-                                        errorMsg = 'MEDIA_ERR_ABORTED: Descarga abortada';
-                                        break;
-                                    case 2:
-                                        errorMsg = 'MEDIA_ERR_NETWORK: Error de red';
-                                        break;
-                                    case 3:
-                                        errorMsg = 'MEDIA_ERR_DECODE: Error decodificando';
-                                        break;
-                                    case 4:
-                                        errorMsg = 'MEDIA_ERR_SRC_NOT_SUPPORTED: Formato no soportado';
-                                        break;
-                                }
-                                errorMsg += ` - ${error.message}`;
+                                errorMsg = `Error ${error.code}: ${error.message}`;
                             }
                             console.error('❌ Error cargando video:', errorMsg);
                             if (!resolved) {
                                 resolved = true;
-                                resolve({
-                                    success: false,
-                                    error: errorMsg
-                                });
+                                resolve({ success: false, error: errorMsg });
                             }
                         };
 
-                        // Timeout de seguridad (20 segundos)
                         setTimeout(() => {
                             if (!resolved) {
                                 resolved = true;
-                                console.error('⏱️ Timeout cargando video');
-                                resolve({
-                                    success: false,
-                                    error: 'Timeout después de 20s'
-                                });
+                                resolve({ success: false, error: 'Timeout' });
                             }
                         }, 20000);
 
-                        // Forzar carga
                         video.load();
 
                     } catch (err: any) {
-                        console.error('❌ Error en evaluate:', err);
-                        resolve({
-                            success: false,
-                            error: err.message || String(err)
-                        });
+                        resolve({ success: false, error: err.message });
                     }
                 });
             }, videoUrl);
@@ -264,9 +294,7 @@ export class ZoomBot {
                 throw new Error(`Error configurando video: ${result.error}`);
             }
 
-            console.log('✅ Cámara virtual configurada exitosamente');
-
-            // Esperar un poco más para asegurar que el stream esté estable
+            console.log('✅ Cámara virtual configurada con audio exitosamente');
             await this.page.waitForTimeout(2000);
 
         } catch (error: any) {
